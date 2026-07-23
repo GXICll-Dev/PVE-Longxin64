@@ -1,0 +1,814 @@
+openapi: 3.1.0
+info:
+  title: PVE-Longxin64 Control Plane API
+  version: 0.1.0
+  description: |
+    PVE 云教室控制平面的首个纵切片契约。
+    当前契约覆盖健康检查、总览、教室读取和教室批量任务创建。
+    浏览器和瘦客户机不得直接访问 PVE API。
+servers:
+  - url: /api/v1
+    description: Same-origin API
+security: []
+tags:
+  - name: System
+    description: 健康检查和运行状态。
+  - name: Dashboard
+    description: 云教室聚合总览。
+  - name: Classrooms
+    description: 教室、座位、终端和桌面读取。
+  - name: Operations
+    description: 异步批量任务创建和追踪。
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: 获取 API 健康状态
+      responses:
+        "200":
+          description: API 可用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /readiness:
+    get:
+      tags: [System]
+      operationId: getReadiness
+      summary: 检查 API 依赖是否就绪
+      responses:
+        "200":
+          description: API 和存储已就绪
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: 存储或必要依赖不可用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboard
+      summary: 获取云教室总览
+      responses:
+        "200":
+          description: 总览快照
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /classrooms:
+    get:
+      tags: [Classrooms]
+      operationId: listClassrooms
+      summary: 获取教室列表
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ClassroomStatus"
+        - name: query
+          in: query
+          required: false
+          description: 按教室名称或站点搜索
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: 教室列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassroomList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /classrooms/{classroomId}:
+    get:
+      tags: [Classrooms]
+      operationId: getClassroom
+      summary: 获取教室及座位状态
+      parameters:
+        - $ref: "#/components/parameters/ClassroomId"
+      responses:
+        "200":
+          description: 教室详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassroomDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /classrooms/{classroomId}/operations:
+    post:
+      tags: [Classrooms, Operations]
+      operationId: createClassroomOperation
+      summary: 创建教室批量任务
+      description: |
+        只创建任务，不同步等待 PVE 操作完成。
+        重复使用相同 Idempotency-Key 和相同请求时必须返回同一个任务。
+      parameters:
+        - $ref: "#/components/parameters/ClassroomId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClassroomOperation"
+      responses:
+        "202":
+          description: 任务已创建或返回已有幂等任务
+          headers:
+            Location:
+              description: 任务查询地址
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 幂等键冲突或存在互斥任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          description: 目标范围或当前状态不允许执行
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /operations/{operationId}:
+    get:
+      tags: [Operations]
+      operationId: getOperation
+      summary: 获取批量任务及单项进度
+      parameters:
+        - $ref: "#/components/parameters/OperationId"
+      responses:
+        "200":
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /operations:
+    get:
+      tags: [Operations]
+      operationId: listOperations
+      summary: 获取最近的批量任务
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: 任务列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    ClassroomId:
+      name: classroomId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 客户端为一次业务意图生成的稳定 UUID。
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: 请求格式错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    InternalError:
+      description: 服务端错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service, version, time]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        service:
+          type: string
+        version:
+          type: string
+        time:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks, time]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+        time:
+          type: string
+          format: date-time
+
+    Dashboard:
+      type: object
+      additionalProperties: false
+      required: [generated_at, summary, alerts]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: "#/components/schemas/DashboardSummary"
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+
+    DashboardSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - classrooms_total
+        - classrooms_ready
+        - classrooms_active
+        - seats_total
+        - seats_ready
+        - thin_clients_online
+        - desktops_running
+        - operations_running
+        - operations_failed
+      properties:
+        classrooms_total:
+          type: integer
+          minimum: 0
+        classrooms_ready:
+          type: integer
+          minimum: 0
+        classrooms_active:
+          type: integer
+          minimum: 0
+        seats_total:
+          type: integer
+          minimum: 0
+        seats_ready:
+          type: integer
+          minimum: 0
+        thin_clients_online:
+          type: integer
+          minimum: 0
+        desktops_running:
+          type: integer
+          minimum: 0
+        operations_running:
+          type: integer
+          minimum: 0
+        operations_failed:
+          type: integer
+          minimum: 0
+
+    Alert:
+      type: object
+      additionalProperties: false
+      required: [id, severity, title, description]
+      properties:
+        id:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        title:
+          type: string
+        description:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ClassroomList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClassroomSummary"
+        total:
+          type: integer
+          minimum: 0
+
+    ClassroomSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - site
+        - status
+        - timezone
+        - seats_total
+        - seats_ready
+        - thin_clients_online
+        - desktops_running
+        - template_name
+        - template_version
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        site:
+          type: string
+        status:
+          $ref: "#/components/schemas/ClassroomStatus"
+        timezone:
+          type: string
+          example: Asia/Shanghai
+        seats_total:
+          type: integer
+          minimum: 0
+        seats_ready:
+          type: integer
+          minimum: 0
+        thin_clients_online:
+          type: integer
+          minimum: 0
+        desktops_running:
+          type: integer
+          minimum: 0
+        template_name:
+          type: string
+        template_version:
+          type: string
+        active_session:
+          anyOf:
+            - type: string
+            - $ref: "#/components/schemas/ActiveSession"
+            - type: "null"
+        updated_at:
+          type: string
+          format: date-time
+
+    ClassroomDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - organization_id
+        - name
+        - site
+        - status
+        - timezone
+        - template_name
+        - template_version
+        - resource_version
+        - updated_at
+        - seats
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        site:
+          type: string
+        status:
+          $ref: "#/components/schemas/ClassroomStatus"
+        timezone:
+          type: string
+        template_name:
+          type: string
+        template_version:
+          type: string
+        active_session:
+          type:
+            - string
+            - "null"
+        resource_version:
+          type: integer
+          minimum: 1
+        updated_at:
+          type: string
+          format: date-time
+        seats:
+          type: array
+          items:
+            $ref: "#/components/schemas/Seat"
+
+    ClassroomStatus:
+      type: string
+      enum: [READY, ACTIVE, DEGRADED, OFFLINE]
+
+    ActiveSession:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, starts_at, ends_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [preparing, ready, opening, active, closing]
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+
+    Seat:
+      type: object
+      additionalProperties: false
+      required: [id, label, operation_state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        terminal:
+          anyOf:
+            - $ref: "#/components/schemas/ThinClient"
+            - type: "null"
+        desktop:
+          anyOf:
+            - $ref: "#/components/schemas/VirtualDesktop"
+            - type: "null"
+        operation_state:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_PVE, VERIFYING, SUCCEEDED, FAILED, SKIPPED, UNKNOWN]
+        user_name:
+          type:
+            - string
+            - "null"
+
+    ThinClient:
+      type: object
+      additionalProperties: false
+      required: [id, name, online, architecture, last_seen_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        online:
+          type: boolean
+        ip_address:
+          type: string
+        architecture:
+          type: string
+          example: loong64
+        agent_version:
+          type: string
+        last_seen_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+
+    VirtualDesktop:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - cluster_id
+        - pve_vmid
+        - desired_state
+        - observed_state
+        - template_version
+        - guest_agent_ready
+        - config_hash
+      properties:
+        id:
+          type: string
+          format: uuid
+        cluster_id:
+          type: string
+          format: uuid
+        pve_vmid:
+          type: integer
+          minimum: 100
+        name:
+          type: string
+        desired_state:
+          type: string
+          enum: [RUNNING, STOPPED, UNKNOWN]
+        observed_state:
+          type: string
+          enum: [RUNNING, STOPPED, UNKNOWN]
+        template_version:
+          type: string
+        guest_agent_ready:
+          type: boolean
+        last_reconciled_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        config_hash:
+          type: string
+
+    CreateClassroomOperation:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/OperationType"
+        seat_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        reason:
+          type: string
+          maxLength: 500
+        confirmed:
+          type: boolean
+          default: false
+
+    Operation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - classroom_id
+        - type
+        - status
+        - counts
+        - items
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        classroom_id:
+          type: string
+          format: uuid
+        classroom_name:
+          type: string
+        type:
+          $ref: "#/components/schemas/OperationType"
+        status:
+          $ref: "#/components/schemas/OperationStatus"
+        reason:
+          type: string
+        request_id:
+          type: string
+        resource_version:
+          type: integer
+          minimum: 1
+        counts:
+          $ref: "#/components/schemas/OperationCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationItem"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+
+    OperationItem:
+      type: object
+      additionalProperties: false
+      required: [id, seat_id, seat_label, target_name, status, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        operation_id:
+          type: string
+          format: uuid
+        seat_id:
+          type: string
+          format: uuid
+        seat_label:
+          type: string
+        desktop_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        cluster_id:
+          type: string
+          format: uuid
+        pve_vmid:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_PVE, VERIFYING, SUCCEEDED, FAILED, SKIPPED, UNKNOWN]
+        target_name:
+          type: string
+        upid:
+          type: string
+        error_code:
+          type: string
+        message:
+          type: string
+        started_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OperationList:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Operation"
+        total:
+          type: integer
+          minimum: 0
+        generated_at:
+          type: string
+          format: date-time
+
+    OperationCounts:
+      type: object
+      additionalProperties: false
+      required: [total, queued, running, succeeded, failed, skipped, unknown]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        queued:
+          type: integer
+          minimum: 0
+        running:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        unknown:
+          type: integer
+          minimum: 0
+
+    OperationType:
+      type: string
+      enum: [PRECHECK, START, SHUTDOWN, RESTORE]
+
+    OperationStatus:
+      type: string
+      enum:
+        - QUEUED
+        - VALIDATING
+        - RUNNING
+        - WAITING_PVE
+        - VERIFYING
+        - SUCCEEDED
+        - PARTIALLY_SUCCEEDED
+        - FAILED
+        - CANCEL_REQUESTED
+        - CANCELLED
+
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [error_code, message, request_id]
+      properties:
+        error_code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+        field_errors:
+          type: object
+          additionalProperties:
+            type: string
+        details:
+          type: object
+          additionalProperties: true

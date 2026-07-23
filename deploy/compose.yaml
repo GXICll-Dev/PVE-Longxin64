@@ -1,0 +1,91 @@
+name: pve-longxin64
+
+x-control-plane: &control-plane
+  build:
+    context: ../server
+    dockerfile: Dockerfile
+    target: runtime
+  env_file:
+    - .env
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - control
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    env_file:
+      - .env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../server/migrations/000001_initial.up.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./postgres/010-development-seed.sql:/docker-entrypoint-initdb.d/010-development-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - control
+
+  api:
+    <<: *control-plane
+
+  worker:
+    <<: *control-plane
+    entrypoint: ["/app/pve-classroom-worker"]
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - control
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+      - web
+    ports:
+      - "8088:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/gateway-health | grep -q 'ok'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+      - control
+
+volumes:
+  postgres-data:
+
+networks:
+  edge:
+  control:
+    internal: true
