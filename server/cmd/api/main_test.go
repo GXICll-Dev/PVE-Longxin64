@@ -94,3 +94,9 @@ func TestHTTPServerShutdownCancelsActiveOperationEventStream(t *testing.T) {
 		t.Fatal("Serve() did not return after shutdown")
 	}
 }
+
+func TestRunnerNotifierNormalizesNilRunner(t *testing.T) {
+	if notifier := runnerNotifier(nil); notifier != nil {
+		t.Fatalf("nil runner became a non-nil notifier: %#v", notifier)
+	}
+}

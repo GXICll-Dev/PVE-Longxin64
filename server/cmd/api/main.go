@@ -59,7 +59,7 @@ func run() error {
 			TaskTimeout:   cfg.PVETaskTimeout,
 		})
 	}
-	manager := operations.NewManager(repository, runner)
+	manager := operations.NewManager(repository, runnerNotifier(runner))
 	handler := httpapi.NewHandler(httpapi.Options{
 		Repository:     repository,
 		Operations:     manager,
@@ -121,6 +121,13 @@ func run() error {
 		return processErr
 	}
 	return nil
+}
+
+func runnerNotifier(runner *operations.Runner) operations.Notifier {
+	if runner == nil {
+		return nil
+	}
+	return runner
 }
 
 func newHTTPServer(cfg config.Config, handler http.Handler, logger *slog.Logger, baseContext context.Context) *http.Server {
