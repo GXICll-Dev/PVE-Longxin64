@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
   ChevronLeft,
+  ChevronRight,
   CircleAlert,
   CircleCheckBig,
   LoaderCircle,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   ServerCog,
   UsersRound,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, createClassroomOperation } from '../api/client';
@@ -21,6 +23,7 @@ import { EmptyState, ErrorState, LoadingState, StaleDataNotice } from '../compon
 import { LastUpdated } from '../components/LastUpdated';
 import { PageHeader } from '../components/PageHeader';
 import { Button } from '../components/ui/Button';
+import { ProgressBar } from '../components/ui/ProgressBar';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { formatCompactId, formatDateTime, normalizeStatus } from '../lib/format';
 import { createOperationIntentSignature, OperationIdempotencyKeyManager } from '../lib/operationIdempotency';
@@ -72,6 +75,9 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
   const navigate = useNavigate();
   const query = useQuery(classroomQueryOptions(classroomId));
   const [selectedSeatIds, setSelectedSeatIds] = useState<Set<string>>(() => new Set());
+  const [inspectedSeatId, setInspectedSeatId] = useState<string | null>(null);
+  const inspectorCloseRef = useRef<HTMLButtonElement>(null);
+  const inspectButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [idempotencyKeys] = useState(
     () => new OperationIdempotencyKeyManager({
       storage: typeof window === 'undefined' ? undefined : window.sessionStorage,
@@ -84,6 +90,11 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
     const seatIds = new Set(query.data?.seats.map((seat) => seat.id) ?? []);
     return [...selectedSeatIds].filter((id) => seatIds.has(id));
   }, [query.data?.seats, selectedSeatIds]);
+
+  const inspectedSeat = useMemo(
+    () => query.data?.seats.find((seat) => seat.id === inspectedSeatId) ?? null,
+    [inspectedSeatId, query.data?.seats],
+  );
 
   const allSelected = Boolean(query.data?.seats.length) && validSelectedIds.length === query.data?.seats.length;
   const targetSeatIds = useMemo(() => [...validSelectedIds].sort(), [validSelectedIds]);
@@ -101,6 +112,25 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
   useEffect(() => {
     idempotencyKeys.synchronize(startIntent);
   }, [idempotencyKeys, startIntent]);
+
+  useEffect(() => {
+    if (!inspectedSeatId) return;
+    const frame = window.requestAnimationFrame(() => inspectorCloseRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [inspectedSeatId]);
+
+  useEffect(() => {
+    if (!inspectedSeatId) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      const previousSeatId = inspectedSeatId;
+      setInspectedSeatId(null);
+      window.requestAnimationFrame(() => inspectButtonRefs.current.get(previousSeatId)?.focus());
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [inspectedSeatId]);
 
   const startMutation = useMutation({
     mutationFn: ({ seatIds, idempotencyKey }: { seatIds: string[]; idempotencyKey: string; intent: string }) =>
@@ -152,6 +182,8 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
     return reason ? [{ id: seat.id, label: seat.label, reason }] : [];
   });
   const attentionSeats = attentionSeatDetails.length;
+  const readinessPercent = classroom.seats.length > 0 ? Math.round((readySeats / classroom.seats.length) * 100) : 0;
+  const inspectedAttentionReason = inspectedSeat ? getSeatAttentionReason(inspectedSeat) : null;
   const actionTargets = validSelectedIds.length > 0
     ? classroom.seats.filter((seat) => selectedSeatIds.has(seat.id))
     : classroom.seats;
@@ -163,7 +195,9 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
     : allActionTargetsRunning
       ? validSelectedIds.length > 0 ? '所选桌面已运行' : '桌面已全部启动'
       : validSelectedIds.length > 0
-        ? `启动 ${validSelectedIds.length} 台桌面`
+        ? stoppedActionTargets < validSelectedIds.length
+          ? `补启 ${stoppedActionTargets} 台桌面`
+          : `启动 ${validSelectedIds.length} 台桌面`
         : classroom.status === 'ACTIVE'
           ? `补启 ${stoppedActionTargets} 台桌面`
           : '整班开机';
@@ -185,8 +219,24 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
     setSelectedSeatIds(new Set(classroom.seats.map((seat) => seat.id)));
   }
 
+  function startOperation() {
+    startMutation.mutate({
+      seatIds: targetSeatIds,
+      idempotencyKey: idempotencyKeys.keyFor(startIntent),
+      intent: startIntent,
+    });
+  }
+
+  function closeInspector() {
+    const previousSeatId = inspectedSeatId;
+    setInspectedSeatId(null);
+    window.requestAnimationFrame(() => {
+      if (previousSeatId) inspectButtonRefs.current.get(previousSeatId)?.focus();
+    });
+  }
+
   return (
-    <div className="page-stack classroom-detail-page">
+    <div className={`page-stack classroom-detail-page${validSelectedIds.length > 0 ? ' classroom-detail-page--selection-active' : ''}`}>
       <PageHeader
         eyebrow={
           <Link to="/classrooms" className="breadcrumb-link">
@@ -197,10 +247,33 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
         title={classroom.name}
         description={`${classroom.site} · 教学模板 ${classroom.template_name} ${classroom.template_version}`}
         actions={
-          <Button onClick={() => void query.refetch()} disabled={query.isFetching}>
-            <RefreshCw className={query.isFetching ? 'spinner' : undefined} aria-hidden="true" size={16} />
-            {query.isFetching ? '刷新中' : '刷新状态'}
-          </Button>
+          <>
+            <Button
+              className="toolbar-button"
+              aria-label={query.isFetching ? '正在刷新课堂状态' : '刷新课堂状态'}
+              onClick={() => void query.refetch()}
+              disabled={query.isFetching}
+            >
+              <RefreshCw className={query.isFetching ? 'spinner' : undefined} aria-hidden="true" size={16} />
+              <span>{query.isFetching ? '刷新中' : '刷新状态'}</span>
+            </Button>
+            {validSelectedIds.length === 0 ? (
+              <Button
+                variant="primary"
+                disabled={startButtonDisabled}
+                aria-describedby={classroom.seats.length > 0 ? 'operation-scope-description' : undefined}
+                title={classroom.seats.length === 0 ? '这间教室还没有可开机的座位' : undefined}
+                onClick={startOperation}
+              >
+                {startMutation.isPending ? (
+                  <LoaderCircle className="spinner" aria-hidden="true" size={16} />
+                ) : (
+                  <Play aria-hidden="true" size={15} fill="currentColor" />
+                )}
+                {startButtonLabel}
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -213,190 +286,250 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
         <LastUpdated value={classroom.updated_at} isFetching={query.isFetching} timezone={classroom.timezone} />
       </div>
 
-      <section className={`classroom-briefing${attentionSeats > 0 ? ' classroom-briefing--attention' : ''}`} aria-labelledby="classroom-health-title">
-        <div>
-          <p className="section-kicker">课堂健康</p>
-          <h2 id="classroom-health-title">
-            {attentionSeats > 0 ? `${attentionSeats} 个座位阻塞开课` : '全部座位已具备教学条件'}
-          </h2>
-          <p>
-            {attentionSeats > 0
-              ? `当前 ${readySeats} / ${classroom.seats.length} 个座位可教学。异常座位已在下方突出显示，请优先处理终端心跳、桌面状态和 Guest Agent。`
-              : `终端、虚拟桌面与 Guest Agent 均已通过最近一次课堂检查，可以执行整班操作。`}
-          </p>
-          {attentionSeatDetails.length > 0 ? (
-            <div className="classroom-attention-list" aria-label="需要处理的座位">
-              {attentionSeatDetails.slice(0, 4).map((seat) => (
-                <span key={seat.id}><strong>{seat.label}</strong>{seat.reason}</span>
-              ))}
-              {attentionSeatDetails.length > 4 ? <span>另有 {attentionSeatDetails.length - 4} 个座位</span> : null}
-            </div>
-          ) : null}
-        </div>
-        <div className="classroom-briefing__score">
-          {attentionSeats > 0 ? <CircleAlert aria-hidden="true" size={20} /> : <CircleCheckBig aria-hidden="true" size={20} />}
-          <strong>{readySeats}<span> / {classroom.seats.length}</span></strong>
-          <small>座位可教学</small>
-        </div>
-      </section>
-
-      <section className="classroom-signal-strip" aria-label="教室状态摘要">
-        <article>
-          <MonitorCheck aria-hidden="true" size={18} />
-          <div><span>终端在线</span><strong>{onlineTerminals} / {classroom.seats.length}</strong></div>
-        </article>
-        <article>
-          <MonitorDot aria-hidden="true" size={18} />
-          <div><span>桌面运行</span><strong>{runningDesktops} / {classroom.seats.length}</strong></div>
-        </article>
-        <article className={operationSeats > 0 ? 'classroom-signal-strip__attention' : undefined}>
-          <ServerCog aria-hidden="true" size={18} />
-          <div><span>处理中座位</span><strong>{operationSeats}</strong></div>
-        </article>
-        <article className={attentionSeats > 0 ? 'classroom-signal-strip__attention' : undefined}>
-          <UsersRound aria-hidden="true" size={18} />
-          <div><span>需要处理</span><strong>{attentionSeats}</strong></div>
-        </article>
-      </section>
-
-      <section className="classroom-action-bar" aria-label="课堂批量操作">
-        <div>
-          <p>本次操作范围</p>
-          <strong id="operation-scope-description" aria-live="polite">
-            {validSelectedIds.length > 0 ? `已选择 ${validSelectedIds.length} 个座位` : '整间教室'}
-          </strong>
-          <span>
-            {classroom.seats.length === 0
-              ? '绑定座位后即可执行批量开机。'
-              : allActionTargetsRunning
-                ? '目标桌面均已运行，无需重复提交。'
-                : validSelectedIds.length > 0 ? '仅对所选座位创建任务。' : '未选择座位时操作整间教室。'}
+      <section
+        className={`classroom-health-summary${attentionSeats > 0 ? ' classroom-health-summary--attention' : ''}`}
+        aria-labelledby="classroom-health-title"
+      >
+        <div className="classroom-health-summary__message">
+          <span className="classroom-health-summary__icon">
+            {attentionSeats > 0 ? <CircleAlert aria-hidden="true" size={18} /> : <CircleCheckBig aria-hidden="true" size={18} />}
           </span>
+          <div>
+            <p className="section-kicker">课堂状态</p>
+            <h2 id="classroom-health-title">
+              {attentionSeats > 0 ? `${attentionSeats} 个座位需要处理` : '课堂已经可以开始'}
+            </h2>
+            <p id="operation-scope-description">
+              {classroom.seats.length === 0
+                ? '绑定座位后即可执行课堂操作。'
+                : allActionTargetsRunning
+                  ? '目标桌面均已运行，无需重复提交。'
+                  : validSelectedIds.length > 0
+                    ? `已选择 ${validSelectedIds.length} 个座位，操作只会作用于所选范围。`
+                    : `${readySeats} / ${classroom.seats.length} 个座位可教学，未选择座位时操作整间教室。`}
+            </p>
+          </div>
         </div>
-        <Button
-          className="classroom-start-button"
-          variant="primary"
-          disabled={startButtonDisabled}
-          aria-describedby={classroom.seats.length > 0 ? 'operation-scope-description' : undefined}
-          title={classroom.seats.length === 0 ? '这间教室还没有可开机的座位' : undefined}
-          onClick={() =>
-            startMutation.mutate({
-              seatIds: targetSeatIds,
-              idempotencyKey: idempotencyKeys.keyFor(startIntent),
-              intent: startIntent,
-            })
-          }
-        >
-          {startMutation.isPending ? (
-            <LoaderCircle className="spinner" aria-hidden="true" size={16} />
-          ) : (
-            <Play aria-hidden="true" size={16} fill="currentColor" />
-          )}
-          {startButtonLabel}
-        </Button>
+
+        <div className="classroom-health-summary__readiness">
+          <div>
+            <span>教学就绪</span>
+            <strong>{readySeats} / {classroom.seats.length}</strong>
+          </div>
+          <ProgressBar value={readinessPercent} label={`${classroom.name} 教学就绪率 ${readinessPercent}%`} />
+        </div>
+
+        <div className="classroom-health-summary__signals" aria-label="教室状态摘要">
+          <div><MonitorCheck aria-hidden="true" size={16} /><span>终端</span><strong>{onlineTerminals}/{classroom.seats.length}</strong></div>
+          <div><MonitorDot aria-hidden="true" size={16} /><span>桌面</span><strong>{runningDesktops}/{classroom.seats.length}</strong></div>
+          <div className={operationSeats > 0 ? 'is-attention' : undefined}><ServerCog aria-hidden="true" size={16} /><span>任务</span><strong>{operationSeats}</strong></div>
+          <div className={attentionSeats > 0 ? 'is-attention' : undefined}><UsersRound aria-hidden="true" size={16} /><span>问题</span><strong>{attentionSeats}</strong></div>
+        </div>
       </section>
 
       {classroom.seats.length === 0 ? (
         <EmptyState title="这间教室还没有座位" description="添加座位并绑定终端、桌面后，课堂状态将在这里显示。" />
       ) : (
-        <section className="panel panel--flush" aria-labelledby="seat-table-title">
-          <div className="panel__header panel__header--padded">
-            <div>
-              <p className="section-kicker">课堂控制台</p>
-              <h2 id="seat-table-title">座位与桌面</h2>
-              <p className="panel__description">正常状态保持安静，阻塞开课的座位会用原因提示突出显示。</p>
+        <section className={`classroom-workspace${inspectedSeat ? ' classroom-workspace--inspecting' : ''}`}>
+          <div className="panel panel--flush classroom-seats-panel" aria-labelledby="seat-table-title">
+            <div className="panel__header panel__header--padded">
+              <div>
+                <p className="section-kicker">课堂控制台</p>
+                <h2 id="seat-table-title">座位与桌面</h2>
+                <p className="panel__description">选择座位执行批量操作，打开详情查看终端、模板与对账信息。</p>
+              </div>
+              <span className="selection-summary">{validSelectedIds.length > 0 ? `已选 ${validSelectedIds.length} / ${classroom.seats.length}` : `${classroom.seats.length} 个座位`}</span>
             </div>
-            <span className="selection-summary">{validSelectedIds.length > 0 ? `已选 ${validSelectedIds.length} / ${classroom.seats.length}` : `${classroom.seats.length} 个座位`}</span>
-          </div>
 
-          <div className="table-shell table-shell--embedded">
-            <table className="data-table seat-table">
-              <caption className="sr-only">{classroom.name}座位、终端和虚拟桌面状态</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="checkbox-column">
-                    <label className="selection-control">
-                      <input
-                        ref={selectAllRef}
-                        className="selection-checkbox"
-                        type="checkbox"
-                        checked={allSelected}
-                        onChange={toggleAll}
-                        aria-label={allSelected ? '取消选择全部座位' : '选择全部座位'}
-                      />
-                    </label>
-                  </th>
-                  <th scope="col">座位</th>
-                  <th scope="col">学生</th>
-                  <th scope="col">瘦客户机</th>
-                  <th scope="col">虚拟桌面</th>
-                  <th scope="col">模板合规</th>
-                  <th scope="col">当前任务</th>
-                  <th scope="col">最后对账</th>
-                </tr>
-              </thead>
-              <tbody>
-                {classroom.seats.map((seat) => {
-                  const terminal = terminalStatus(seat);
-                  const attentionReason = getSeatAttentionReason(seat);
-                  return (
-                    <tr
-                      key={seat.id}
-                      data-selected={selectedSeatIds.has(seat.id) || undefined}
-                      data-attention={attentionReason ? true : undefined}
-                    >
-                      <td className="checkbox-column">
-                        <label className="selection-control">
-                          <input
-                            className="selection-checkbox"
-                            type="checkbox"
-                            checked={selectedSeatIds.has(seat.id)}
-                            onChange={() => toggleSeat(seat.id)}
-                            aria-label={`选择座位 ${seat.label}`}
-                          />
-                        </label>
-                      </td>
-                      <td>
-                        <div className="seat-label-cell">
-                          <strong>{seat.label}</strong>
+            <div className="table-shell table-shell--embedded">
+              <table className="data-table seat-table">
+                <caption className="sr-only">{classroom.name}座位、终端和虚拟桌面状态</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className="checkbox-column">
+                      <label className="selection-control">
+                        <input
+                          ref={selectAllRef}
+                          className="selection-checkbox"
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={toggleAll}
+                          aria-label={allSelected ? '取消选择全部座位' : '选择全部座位'}
+                        />
+                      </label>
+                    </th>
+                    <th scope="col">座位与学生</th>
+                    <th scope="col">瘦客户机</th>
+                    <th scope="col">虚拟桌面</th>
+                    <th scope="col">当前状态</th>
+                    <th scope="col" className="disclosure-column"><span className="sr-only">详情</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {classroom.seats.map((seat) => {
+                    const terminal = terminalStatus(seat);
+                    const attentionReason = getSeatAttentionReason(seat);
+                    return (
+                      <tr
+                        key={seat.id}
+                        data-selected={selectedSeatIds.has(seat.id) || undefined}
+                        data-attention={attentionReason ? true : undefined}
+                        data-inspected={inspectedSeatId === seat.id || undefined}
+                      >
+                        <td className="checkbox-column">
+                          <label className="selection-control">
+                            <input
+                              className="selection-checkbox"
+                              type="checkbox"
+                              checked={selectedSeatIds.has(seat.id)}
+                              onChange={() => toggleSeat(seat.id)}
+                              aria-label={`选择座位 ${seat.label}`}
+                            />
+                          </label>
+                        </td>
+                        <td>
+                          <div className="seat-identity-cell">
+                            <strong>{seat.label}</strong>
+                            <span>{seat.user_name || '未分配学生'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="primary-cell primary-cell--compact">
+                            <StatusBadge status={terminal.status} label={terminal.label} />
+                            <span>{seat.terminal?.name ?? '无终端'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="primary-cell primary-cell--compact">
+                            <StatusBadge status={seat.desktop?.observed_state ?? 'UNBOUND'} label={seat.desktop ? undefined : '未分配'} />
+                            <span>{seat.desktop?.name ?? '无桌面'}</span>
+                          </div>
+                        </td>
+                        <td>
                           <span className={attentionReason ? 'seat-health seat-health--attention' : 'seat-health'}>
                             {attentionReason ?? '可教学'}
                           </span>
-                        </div>
-                      </td>
-                      <td>{seat.user_name || <span className="muted-cell">未分配</span>}</td>
-                      <td>
-                        <div className="primary-cell primary-cell--compact">
-                          <StatusBadge status={terminal.status} label={terminal.label} />
-                          <span>{seat.terminal?.name ?? '无终端'}{seat.terminal?.ip_address ? ` · ${seat.terminal.ip_address}` : ''}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="primary-cell primary-cell--compact">
-                          <StatusBadge status={seat.desktop?.observed_state ?? 'UNBOUND'} label={seat.desktop ? undefined : '未分配'} />
-                          <span>{seat.desktop?.name ?? '无桌面'}{seat.desktop?.pve_vmid ? ` · VMID ${seat.desktop.pve_vmid}` : ''}</span>
-                        </div>
-                      </td>
-                      <td>
-                        {seat.desktop ? (
-                          <div className="primary-cell primary-cell--compact">
-                            <strong>{seat.desktop.template_version}</strong>
-                            <span className={seat.desktop.guest_agent_ready ? undefined : 'inline-attention'}>
-                              {seat.desktop.guest_agent_ready ? 'Guest Agent 正常' : 'Guest Agent 未就绪'}
-                            </span>
-                          </div>
-                        ) : <span className="muted-cell">无桌面</span>}
-                      </td>
-                      <td><StatusBadge status={seat.operation_state} /></td>
-                      <td className="muted-cell">{formatDateTime(seat.desktop?.last_reconciled_at, classroom.timezone)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td className="disclosure-column">
+                          <button
+                            ref={(node) => {
+                              if (node) inspectButtonRefs.current.set(seat.id, node);
+                              else inspectButtonRefs.current.delete(seat.id);
+                            }}
+                            type="button"
+                            className="row-disclosure"
+                            aria-label={`查看 ${seat.label} 详情`}
+                            aria-expanded={inspectedSeatId === seat.id}
+                            aria-controls={inspectedSeatId === seat.id ? 'seat-inspector' : undefined}
+                            onClick={() => setInspectedSeatId(seat.id)}
+                          >
+                            <ChevronRight aria-hidden="true" size={17} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
+
+          {inspectedSeat ? (
+            <aside id="seat-inspector" className="seat-inspector" aria-labelledby="seat-inspector-title">
+              <header className="seat-inspector__header">
+                <div>
+                  <p className="section-kicker">座位详情</p>
+                  <h2 id="seat-inspector-title">{inspectedSeat.label}</h2>
+                  <span>{inspectedSeat.user_name || '未分配学生'}</span>
+                </div>
+                <button
+                  ref={inspectorCloseRef}
+                  type="button"
+                  className="icon-button"
+                  aria-label="关闭座位详情"
+                  onClick={closeInspector}
+                >
+                  <X aria-hidden="true" size={17} />
+                </button>
+              </header>
+
+              <div className={`inspector-health${inspectedAttentionReason ? ' inspector-health--attention' : ''}`}>
+                {inspectedAttentionReason ? <CircleAlert aria-hidden="true" size={17} /> : <CircleCheckBig aria-hidden="true" size={17} />}
+                <div>
+                  <strong>{inspectedAttentionReason ?? '可教学'}</strong>
+                  <span>{inspectedAttentionReason ? '请先处理后再开始课堂' : '最近一次检查未发现阻塞项'}</span>
+                </div>
+              </div>
+
+              <dl className="inspector-list">
+                <div>
+                  <dt>瘦客户机</dt>
+                  <dd><StatusBadge status={terminalStatus(inspectedSeat).status} label={terminalStatus(inspectedSeat).label} /></dd>
+                  <dd>{inspectedSeat.terminal?.name ?? '未绑定'}{inspectedSeat.terminal?.ip_address ? ` · ${inspectedSeat.terminal.ip_address}` : ''}</dd>
+                </div>
+                <div>
+                  <dt>虚拟桌面</dt>
+                  <dd><StatusBadge status={inspectedSeat.desktop?.observed_state ?? 'UNBOUND'} label={inspectedSeat.desktop ? undefined : '未分配'} /></dd>
+                  <dd>{inspectedSeat.desktop?.name ?? '未分配'}{inspectedSeat.desktop?.pve_vmid ? ` · VMID ${inspectedSeat.desktop.pve_vmid}` : ''}</dd>
+                </div>
+                <div>
+                  <dt>教学模板</dt>
+                  <dd>{inspectedSeat.desktop?.template_version ?? '—'}</dd>
+                  <dd className={inspectedSeat.desktop?.guest_agent_ready ? undefined : 'inline-attention'}>
+                    {inspectedSeat.desktop?.guest_agent_ready ? 'Guest Agent 正常' : 'Guest Agent 未就绪'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>当前任务</dt>
+                  <dd><StatusBadge status={inspectedSeat.operation_state} /></dd>
+                  <dd>最后对账 {formatDateTime(inspectedSeat.desktop?.last_reconciled_at, classroom.timezone)}</dd>
+                </div>
+              </dl>
+
+              <Button
+                className="seat-inspector__selection"
+                variant={selectedSeatIds.has(inspectedSeat.id) ? 'secondary' : 'primary'}
+                onClick={() => toggleSeat(inspectedSeat.id)}
+              >
+                {selectedSeatIds.has(inspectedSeat.id) ? '取消选择此座位' : '选择此座位'}
+              </Button>
+            </aside>
+          ) : null}
         </section>
       )}
+
+      {validSelectedIds.length > 0 ? (
+        <section className="selection-bar" aria-label="所选座位操作" aria-live="polite">
+          <div>
+            <strong>已选 {validSelectedIds.length} 个座位</strong>
+            <span>{allActionTargetsRunning ? '所选桌面均已运行' : `其中 ${stoppedActionTargets} 台桌面需要启动`}</span>
+          </div>
+          <div className="selection-bar__actions">
+            <Button
+              className="selection-bar__cancel"
+              variant="ghost"
+              aria-label="取消选择全部座位"
+              onClick={() => setSelectedSeatIds(new Set())}
+            >
+              <X aria-hidden="true" size={16} />
+              <span>取消选择</span>
+            </Button>
+            <Button
+              variant="primary"
+              disabled={startButtonDisabled}
+              aria-describedby="operation-scope-description"
+              onClick={startOperation}
+            >
+              {startMutation.isPending ? (
+                <LoaderCircle className="spinner" aria-hidden="true" size={16} />
+              ) : (
+                <Play aria-hidden="true" size={15} fill="currentColor" />
+              )}
+              {startButtonLabel}
+            </Button>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

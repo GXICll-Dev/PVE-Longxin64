@@ -1,8 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  CheckCircle2,
   ChevronDown,
-  CircleAlert,
   ClipboardCheck,
   Clock3,
   Play,
@@ -38,90 +36,89 @@ function OperationTypeIcon({ type }: { type: OperationType }) {
   }
 }
 
-function OperationCard({ operation }: { operation: Operation }) {
+function OperationTaskRow({ operation }: { operation: Operation }) {
   const progress = getOperationProgress(operation.counts);
   const hasAttentionItems = operation.items.some((item) =>
     ['FAILED', 'UNKNOWN'].includes(item.status.toUpperCase()),
-  );
+  ) || operation.counts.failed > 0 || operation.counts.unknown > 0;
   const needsAttention = hasAttentionItems || ['FAILED', 'PARTIALLY_SUCCEEDED'].includes(operation.status.toUpperCase());
   const isActive = ACTIVE_STATUSES.includes(operation.status.toUpperCase());
   const [itemsOpen, setItemsOpen] = useState(needsAttention);
-  const hasAutoOpened = useRef(needsAttention);
+  const previouslyNeededAttention = useRef(needsAttention);
 
   useEffect(() => {
-    if (needsAttention && !hasAutoOpened.current) {
-      hasAutoOpened.current = true;
+    if (needsAttention && !previouslyNeededAttention.current) {
       setItemsOpen(true);
     }
+    previouslyNeededAttention.current = needsAttention;
   }, [needsAttention]);
 
-  const unresolvedCount = operation.counts.failed + operation.counts.unknown;
+  const timeValue = isActive
+    ? operation.created_at
+    : operation.completed_at ?? operation.updated_at ?? operation.created_at;
+  const timeLabel = isActive ? '创建时间' : operation.completed_at ? '完成时间' : '更新时间';
+  const completionHint = needsAttention
+    ? `${operation.counts.failed} 失败 · ${operation.counts.unknown} 未知`
+    : isActive
+      ? `${operation.counts.running} 执行中 · ${operation.counts.queued} 排队`
+      : `${operation.counts.succeeded} 成功`;
 
   return (
-    <article className={`operation-card${needsAttention ? ' operation-card--attention' : ''}`}>
-      <header className="operation-card__header">
-        <div className="operation-card__identity">
-          <span className="operation-card__icon">
+    <article
+      className={`operation-task-row${isActive ? ' operation-task-row--active' : ''}${needsAttention ? ' operation-task-row--attention' : ''}`}
+    >
+      <header className="operation-task-row__main">
+        <div className="operation-task-row__action">
+          <span className="operation-task-row__icon">
             <OperationTypeIcon type={operation.type} />
           </span>
           <div>
-            <p>{operation.classroom_name || operation.classroom_id}</p>
-            <h2>{formatOperationType(operation.type)}</h2>
+            <strong>{formatOperationType(operation.type)}</strong>
             <code title={operation.id}>{formatCompactId(operation.id)}</code>
           </div>
         </div>
-        <div className="operation-card__meta">
-          <StatusBadge status={operation.status} />
-          <span><Clock3 aria-hidden="true" size={13} /> {formatDateTime(operation.created_at)}</span>
+
+        <div className="operation-task-row__classroom">
+          <span>教室</span>
+          <strong>{operation.classroom_name || operation.classroom_id}</strong>
         </div>
+
+        <div className="operation-task-row__status">
+          <span className="sr-only">任务状态</span>
+          <StatusBadge status={operation.status} />
+        </div>
+
+        <div className="operation-task-row__completion">
+          <span>完成数</span>
+          <strong>{progress.completed} / {operation.counts.total}</strong>
+          <small>{completionHint}</small>
+        </div>
+
+        <time className="operation-task-row__time" dateTime={timeValue}>
+          <Clock3 aria-hidden="true" size={14} />
+          <span>
+            <small>{timeLabel}</small>
+            <strong>{formatDateTime(timeValue)}</strong>
+          </span>
+        </time>
       </header>
 
       {isActive ? (
-        <section className="operation-card__progress" aria-label="任务执行进度">
-          <div className="operation-progress-heading">
-            <div>
-              <span>正在处理座位</span>
-              <strong>{progress.completed} / {operation.counts.total} 已有终态</strong>
-            </div>
+        <div className="operation-task-row__progress" aria-label="任务执行进度">
+          <ProgressBar value={progress.percent} label={`${formatOperationType(operation.type)}完成 ${progress.percent}%`} />
+          <div className="operation-task-row__progress-meta">
+            <span>{progress.completed} / {operation.counts.total} 已有终态</span>
             <strong>{progress.percent}%</strong>
           </div>
-          <ProgressBar value={progress.percent} label={`${formatOperationType(operation.type)}完成 ${progress.percent}%`} />
-        </section>
-      ) : (
-        <section className={`operation-outcome${needsAttention ? ' operation-outcome--attention' : ''}`} aria-label="任务结果">
-          {needsAttention ? <CircleAlert aria-hidden="true" size={20} /> : <CheckCircle2 aria-hidden="true" size={20} />}
-          <div>
-            <strong>
-              {needsAttention
-                ? `${unresolvedCount} 个座位需要确认`
-                : `${operation.counts.succeeded} 个座位已完成`}
-            </strong>
-            <span>
-              {operation.completed_at ? `完成于 ${formatDateTime(operation.completed_at)}` : '任务已进入终态'}
-            </span>
-          </div>
-        </section>
-      )}
-
-      <dl className="operation-counts">
-        <div><dt>成功</dt><dd>{operation.counts.succeeded}</dd></div>
-        <div><dt>执行中</dt><dd>{operation.counts.running}</dd></div>
-        <div><dt>排队</dt><dd>{operation.counts.queued}</dd></div>
-        <div className={operation.counts.failed > 0 ? 'operation-counts__attention' : undefined}>
-          <dt>失败</dt><dd>{operation.counts.failed}</dd>
         </div>
-        <div className={operation.counts.unknown > 0 ? 'operation-counts__attention' : undefined}>
-          <dt>未知</dt><dd>{operation.counts.unknown}</dd>
-        </div>
-        <div><dt>跳过</dt><dd>{operation.counts.skipped}</dd></div>
-      </dl>
+      ) : null}
 
       <details
-        className="operation-items"
+        className="operation-items operation-task-row__details"
         open={itemsOpen}
         onToggle={(event) => setItemsOpen(event.currentTarget.open)}
       >
-        <summary>
+        <summary className="operation-task-row__details-summary">
           <span className="operation-items__summary-content">
             <span>
               单机结果（{operation.items.length}）
@@ -130,7 +127,9 @@ function OperationCard({ operation }: { operation: Operation }) {
             <span>
               {hasAttentionItems
                 ? `${operation.counts.failed} 项失败 · ${operation.counts.unknown} 项未知${itemsOpen ? '，已展开' : '，展开查看'}`
-                : '查看座位级执行结果'}
+                : operation.items.length > 0
+                  ? '查看座位级执行结果'
+                  : '尚无座位级结果'}
             </span>
           </span>
         </summary>
@@ -278,9 +277,13 @@ export function OperationsPage() {
                 <strong>{group.items.length}</strong>
               </header>
               <div className="operation-group__list">
-                {group.items.map((operation) => (
-                  <OperationCard key={operation.id} operation={operation} />
-                ))}
+                <ul className="operation-grouped-list">
+                  {group.items.map((operation) => (
+                    <li className="operation-grouped-list__item" key={operation.id}>
+                      <OperationTaskRow operation={operation} />
+                    </li>
+                  ))}
+                </ul>
               </div>
             </section>
           ))}
