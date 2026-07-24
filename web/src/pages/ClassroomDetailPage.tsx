@@ -315,14 +315,16 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
               <thead>
                 <tr>
                   <th scope="col" className="checkbox-column">
-                    <input
-                      ref={selectAllRef}
-                      className="selection-checkbox"
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleAll}
-                      aria-label={allSelected ? '取消选择全部座位' : '选择全部座位'}
-                    />
+                    <label className="selection-control">
+                      <input
+                        ref={selectAllRef}
+                        className="selection-checkbox"
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        aria-label={allSelected ? '取消选择全部座位' : '选择全部座位'}
+                      />
+                    </label>
                   </th>
                   <th scope="col">座位</th>
                   <th scope="col">学生</th>
@@ -344,13 +346,15 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
                       data-attention={attentionReason ? true : undefined}
                     >
                       <td className="checkbox-column">
-                        <input
-                          className="selection-checkbox"
-                          type="checkbox"
-                          checked={selectedSeatIds.has(seat.id)}
-                          onChange={() => toggleSeat(seat.id)}
-                          aria-label={`选择座位 ${seat.label}`}
-                        />
+                        <label className="selection-control">
+                          <input
+                            className="selection-checkbox"
+                            type="checkbox"
+                            checked={selectedSeatIds.has(seat.id)}
+                            onChange={() => toggleSeat(seat.id)}
+                            aria-label={`选择座位 ${seat.label}`}
+                          />
+                        </label>
                       </td>
                       <td>
                         <div className="seat-label-cell">

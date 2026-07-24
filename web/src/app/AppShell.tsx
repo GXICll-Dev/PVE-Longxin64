@@ -70,8 +70,6 @@ export function AppShell() {
         <header className="topbar">
           <div className="topbar__context" aria-label="当前位置">
             <BookOpenCheck aria-hidden="true" size={17} />
-            <span>教学运营</span>
-            <span className="topbar__divider" aria-hidden="true" />
             <strong>{currentSection}</strong>
           </div>
           <Link to="/operations" className="topbar__task-link">

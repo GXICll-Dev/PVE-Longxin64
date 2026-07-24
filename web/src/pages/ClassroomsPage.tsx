@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, CircleAlert, Clock3, MonitorCheck, MonitorUp, RefreshCw, UsersRound } from 'lucide-react';
+import { useState } from 'react';
 import { classroomsQueryOptions } from '../api/queries';
 import { EmptyState, ErrorState, LoadingState, StaleDataNotice } from '../components/AsyncState';
 import { LastUpdated } from '../components/LastUpdated';
@@ -11,6 +12,7 @@ import { formatActiveSession, formatDateTime, ratioLabel } from '../lib/format';
 
 export function ClassroomsPage() {
   const query = useQuery(classroomsQueryOptions);
+  const [filter, setFilter] = useState<'all' | 'ready' | 'attention'>('all');
 
   if (!query.data) {
     if (query.isPending) return <LoadingState label="正在加载云教室" />;
@@ -18,8 +20,16 @@ export function ClassroomsPage() {
   }
 
   const refreshedAt = query.data.generated_at ?? new Date(query.dataUpdatedAt).toISOString();
-  const readyClassrooms = query.data.items.filter((classroom) => ['READY', 'ACTIVE'].includes(classroom.status)).length;
+  const readyClassrooms = query.data.items.filter((classroom) =>
+    classroom.seats_total > 0 && classroom.seats_ready === classroom.seats_total,
+  ).length;
   const attentionClassrooms = Math.max(0, query.data.total - readyClassrooms);
+  const filteredClassrooms = query.data.items.filter((classroom) => {
+    const isReady = classroom.seats_total > 0 && classroom.seats_ready === classroom.seats_total;
+    if (filter === 'ready') return isReady;
+    if (filter === 'attention') return !isReady;
+    return true;
+  });
 
   return (
     <div className="page-stack">
@@ -45,11 +55,28 @@ export function ClassroomsPage() {
         <LastUpdated value={refreshedAt} isFetching={query.isFetching} label="刷新时间" />
       </div>
 
+      <div className="classroom-toolbar">
+        <div className="segmented-control" role="group" aria-label="筛选云教室">
+          <button type="button" aria-pressed={filter === 'all'} data-active={filter === 'all' || undefined} onClick={() => setFilter('all')}>
+            全部 <span>{query.data.total}</span>
+          </button>
+          <button type="button" aria-pressed={filter === 'ready'} data-active={filter === 'ready' || undefined} onClick={() => setFilter('ready')}>
+            可开课 <span>{readyClassrooms}</span>
+          </button>
+          <button type="button" aria-pressed={filter === 'attention'} data-active={filter === 'attention' || undefined} onClick={() => setFilter('attention')}>
+            需处理 <span>{attentionClassrooms}</span>
+          </button>
+        </div>
+        <span>{filter === 'all' ? '显示全部教室' : filter === 'ready' ? '仅显示全部座位可教学的教室' : '仅显示存在阻塞座位的教室'}</span>
+      </div>
+
       {query.data.items.length === 0 ? (
         <EmptyState title="尚未配置云教室" description="完成 PVE 集群接入后，可由学校运维创建教室与座位。" />
+      ) : filteredClassrooms.length === 0 ? (
+        <EmptyState title="这个筛选下没有教室" description="切换到其他状态即可继续查看。" />
       ) : (
         <section className="classroom-list" aria-label="云教室状态列表">
-          {query.data.items.map((classroom) => {
+          {filteredClassrooms.map((classroom) => {
             const readiness = classroom.seats_total > 0
               ? Math.round((classroom.seats_ready / classroom.seats_total) * 100)
               : 0;
