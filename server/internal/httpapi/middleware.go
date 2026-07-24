@@ -76,7 +76,7 @@ func corsMiddleware(origins []string, next http.Handler) http.Handler {
 				writer.Header().Set("Access-Control-Allow-Origin", origin)
 				writer.Header().Set("Access-Control-Allow-Credentials", "true")
 				writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-				writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Request-ID")
+				writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-Request-ID")
 				writer.Header().Set("Access-Control-Max-Age", "600")
 				writer.Header().Add("Vary", "Origin")
 			} else if request.Method == http.MethodOptions {
@@ -96,6 +96,10 @@ type responseRecorder struct {
 	http.ResponseWriter
 	status int
 	bytes  int
+}
+
+func (recorder *responseRecorder) Unwrap() http.ResponseWriter {
+	return recorder.ResponseWriter
 }
 
 func (recorder *responseRecorder) WriteHeader(status int) {

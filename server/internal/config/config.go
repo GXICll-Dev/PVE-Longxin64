@@ -19,25 +19,33 @@ const (
 )
 
 type Config struct {
-	Environment        Environment
-	HTTPAddress        string
-	LogLevel           slog.Level
-	StoreDriver        string
-	DatabaseURL        string
-	PVEAdapter         string
-	EmbeddedWorker     bool
-	OperationWaveSize  int
-	WorkerPollInterval time.Duration
-	WorkerLease        time.Duration
-	FakePVEDelay       time.Duration
-	PVERequestTimeout  time.Duration
-	PVETaskTimeout     time.Duration
-	ShutdownTimeout    time.Duration
-	ReadHeaderTimeout  time.Duration
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	IdleTimeout        time.Duration
-	AllowedOrigins     []string
+	Environment         Environment
+	HTTPAddress         string
+	LogLevel            slog.Level
+	StoreDriver         string
+	DatabaseURL         string
+	PVEAdapter          string
+	PVEClusterID        string
+	PVEManagedPool      string
+	PVEBaseURL          string
+	PVETokenID          string
+	PVETokenSecret      string
+	PVETokenSecretFile  string
+	PVECACertFile       string
+	EmbeddedWorker      bool
+	OperationWaveSize   int
+	WorkerPollInterval  time.Duration
+	WorkerLease         time.Duration
+	FakePVEDelay        time.Duration
+	PVERequestTimeout   time.Duration
+	PVETaskTimeout      time.Duration
+	PVETaskPollInterval time.Duration
+	ShutdownTimeout     time.Duration
+	ReadHeaderTimeout   time.Duration
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	AllowedOrigins      []string
 }
 
 func Load() (Config, error) {
@@ -65,12 +73,19 @@ func Load() (Config, error) {
 	if pveAdapter == "" && environment != EnvironmentProduction {
 		pveAdapter = "fake"
 	}
-	if pveAdapter != "fake" {
-		return Config{}, errors.New("this build supports PVE_ADAPTER=fake only; a production PVE adapter must be configured in a later integration phase")
+	if pveAdapter != "fake" && pveAdapter != "http" {
+		return Config{}, errors.New("PVE_ADAPTER must be fake or http")
 	}
 	if environment == EnvironmentProduction && pveAdapter == "fake" {
 		return Config{}, errors.New("production cannot use the Fake PVE adapter")
 	}
+	pveClusterID := strings.TrimSpace(os.Getenv("PVE_CLUSTER_ID"))
+	pveManagedPool := strings.TrimSpace(os.Getenv("PVE_MANAGED_POOL"))
+	pveBaseURL := strings.TrimSpace(os.Getenv("PVE_BASE_URL"))
+	pveTokenID := strings.TrimSpace(os.Getenv("PVE_TOKEN_ID"))
+	pveTokenSecret := os.Getenv("PVE_TOKEN_SECRET")
+	pveTokenSecretFile := strings.TrimSpace(os.Getenv("PVE_TOKEN_SECRET_FILE"))
+	pveCACertFile := strings.TrimSpace(os.Getenv("PVE_CA_CERT_FILE"))
 
 	logLevel, err := parseLogLevel(getenv("PVE_LOG_LEVEL", "info"))
 	if err != nil {
@@ -98,6 +113,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	pveTaskTimeout, err := duration("PVE_TASK_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	pveTaskPollInterval, err := duration("PVE_TASK_POLL_INTERVAL", time.Second)
 	if err != nil {
 		return Config{}, err
 	}
@@ -134,25 +153,33 @@ func Load() (Config, error) {
 		allowedOriginsDefault = "http://localhost:5173"
 	}
 	return Config{
-		Environment:        environment,
-		HTTPAddress:        getenv("PVE_HTTP_ADDRESS", ":8080"),
-		LogLevel:           logLevel,
-		StoreDriver:        storeDriver,
-		DatabaseURL:        databaseURL,
-		PVEAdapter:         pveAdapter,
-		EmbeddedWorker:     embeddedWorker,
-		OperationWaveSize:  operationWaveSize,
-		WorkerPollInterval: workerPollInterval,
-		WorkerLease:        workerLease,
-		FakePVEDelay:       fakePVEDelay,
-		PVERequestTimeout:  pveRequestTimeout,
-		PVETaskTimeout:     pveTaskTimeout,
-		ShutdownTimeout:    shutdownTimeout,
-		ReadHeaderTimeout:  readHeaderTimeout,
-		ReadTimeout:        readTimeout,
-		WriteTimeout:       writeTimeout,
-		IdleTimeout:        idleTimeout,
-		AllowedOrigins:     commaSeparated(getenv("PVE_ALLOWED_ORIGINS", allowedOriginsDefault)),
+		Environment:         environment,
+		HTTPAddress:         getenv("PVE_HTTP_ADDRESS", ":8080"),
+		LogLevel:            logLevel,
+		StoreDriver:         storeDriver,
+		DatabaseURL:         databaseURL,
+		PVEAdapter:          pveAdapter,
+		PVEClusterID:        pveClusterID,
+		PVEManagedPool:      pveManagedPool,
+		PVEBaseURL:          pveBaseURL,
+		PVETokenID:          pveTokenID,
+		PVETokenSecret:      pveTokenSecret,
+		PVETokenSecretFile:  pveTokenSecretFile,
+		PVECACertFile:       pveCACertFile,
+		EmbeddedWorker:      embeddedWorker,
+		OperationWaveSize:   operationWaveSize,
+		WorkerPollInterval:  workerPollInterval,
+		WorkerLease:         workerLease,
+		FakePVEDelay:        fakePVEDelay,
+		PVERequestTimeout:   pveRequestTimeout,
+		PVETaskTimeout:      pveTaskTimeout,
+		PVETaskPollInterval: pveTaskPollInterval,
+		ShutdownTimeout:     shutdownTimeout,
+		ReadHeaderTimeout:   readHeaderTimeout,
+		ReadTimeout:         readTimeout,
+		WriteTimeout:        writeTimeout,
+		IdleTimeout:         idleTimeout,
+		AllowedOrigins:      commaSeparated(getenv("PVE_ALLOWED_ORIGINS", allowedOriginsDefault)),
 	}, nil
 }
 

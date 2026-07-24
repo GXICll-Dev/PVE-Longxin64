@@ -15,7 +15,7 @@ import {
 import type { ReactNode } from 'react';
 import { dashboardQueryOptions } from '../api/queries';
 import type { DashboardAlert } from '../api/types';
-import { EmptyState, ErrorState, LoadingState } from '../components/AsyncState';
+import { EmptyState, ErrorState, LoadingState, StaleDataNotice } from '../components/AsyncState';
 import { LastUpdated } from '../components/LastUpdated';
 import { PageHeader } from '../components/PageHeader';
 import { Button } from '../components/ui/Button';
@@ -67,8 +67,10 @@ function AlertItem({ alert }: { alert: DashboardAlert }) {
 export function DashboardPage() {
   const query = useQuery(dashboardQueryOptions);
 
-  if (query.isPending) return <LoadingState label="正在加载运营总览" />;
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (!query.data) {
+    if (query.isPending) return <LoadingState label="正在加载运营总览" />;
+    return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  }
 
   const { summary, alerts, generated_at: generatedAt } = query.data;
   const readiness = summary.seats_total > 0 ? Math.round((summary.seats_ready / summary.seats_total) * 100) : 0;
@@ -85,6 +87,10 @@ export function DashboardPage() {
           </Button>
         }
       />
+
+      {query.isError ? (
+        <StaleDataNotice error={query.error} isRetrying={query.isFetching} onRetry={() => void query.refetch()} />
+      ) : null}
 
       <LastUpdated value={generatedAt} isFetching={query.isFetching} />
 

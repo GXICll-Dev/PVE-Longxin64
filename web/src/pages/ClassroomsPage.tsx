@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, RefreshCw } from 'lucide-react';
 import { classroomsQueryOptions } from '../api/queries';
-import { EmptyState, ErrorState, LoadingState } from '../components/AsyncState';
+import { EmptyState, ErrorState, LoadingState, StaleDataNotice } from '../components/AsyncState';
 import { LastUpdated } from '../components/LastUpdated';
 import { PageHeader } from '../components/PageHeader';
 import { Button } from '../components/ui/Button';
@@ -12,10 +12,12 @@ import { formatActiveSession, formatDateTime, ratioLabel } from '../lib/format';
 export function ClassroomsPage() {
   const query = useQuery(classroomsQueryOptions);
 
-  if (query.isPending) return <LoadingState label="正在加载云教室" />;
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (!query.data) {
+    if (query.isPending) return <LoadingState label="正在加载云教室" />;
+    return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  }
 
-  const refreshedAt = new Date(query.dataUpdatedAt).toISOString();
+  const refreshedAt = query.data.generated_at ?? new Date(query.dataUpdatedAt).toISOString();
 
   return (
     <div className="page-stack">
@@ -29,6 +31,9 @@ export function ClassroomsPage() {
           </Button>
         }
       />
+      {query.isError ? (
+        <StaleDataNotice error={query.error} isRetrying={query.isFetching} onRetry={() => void query.refetch()} />
+      ) : null}
       <div className="page-meta-row">
         <span className="result-count">共 {query.data.total} 间教室</span>
         <LastUpdated value={refreshedAt} isFetching={query.isFetching} label="刷新时间" />

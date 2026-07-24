@@ -145,6 +145,18 @@ func (runner *Runner) execute(ctx context.Context, operation *domain.Operation) 
 				if err := runner.repository.ApplyOperationItemResult(ctx, operation.ClassroomID, item.SeatID, operation.Type, domain.ItemFailed); err != nil {
 					return err
 				}
+				continue
+			}
+			if operation.Type == domain.OperationRestore && item.SnapshotName == "" {
+				now := runner.now().UTC()
+				item.Status = domain.ItemFailed
+				item.ErrorCode = "BASELINE_SNAPSHOT_NOT_CONFIGURED"
+				item.Message = "虚拟桌面未配置可回滚的基线快照"
+				item.CompletedAt = &now
+				item.UpdatedAt = now
+				if err := runner.repository.ApplyOperationItemResult(ctx, operation.ClassroomID, item.SeatID, operation.Type, domain.ItemFailed); err != nil {
+					return err
+				}
 			}
 		}
 		if err := operation.Transition(domain.OperationRunning, runner.now()); err != nil {
@@ -207,6 +219,7 @@ func (runner *Runner) execute(ctx context.Context, operation *domain.Operation) 
 				DesktopID:     item.DesktopID,
 				ClusterID:     item.ClusterID,
 				PVEVMID:       item.PVEVMID,
+				SnapshotName:  item.SnapshotName,
 				Type:          operation.Type,
 			})
 			cancelSubmit()

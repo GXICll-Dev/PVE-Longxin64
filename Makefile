@@ -26,7 +26,7 @@ openapi-lint:
 	npx --yes @redocly/cli@2.40.0 lint api/openapi.yaml
 
 build:
-	cd server && go build ./cmd/api ./cmd/worker
+	cd server && go build ./cmd/api ./cmd/worker ./cmd/healthcheck
 	cd web && npm run build
 
 compose-up:

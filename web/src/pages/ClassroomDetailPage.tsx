@@ -15,12 +15,13 @@ import { toast } from 'sonner';
 import { ApiError, createClassroomOperation } from '../api/client';
 import { classroomQueryOptions, queryKeys } from '../api/queries';
 import type { Seat } from '../api/types';
-import { EmptyState, ErrorState, LoadingState } from '../components/AsyncState';
+import { EmptyState, ErrorState, LoadingState, StaleDataNotice } from '../components/AsyncState';
 import { LastUpdated } from '../components/LastUpdated';
 import { PageHeader } from '../components/PageHeader';
 import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { formatCompactId, formatDateTime, normalizeStatus } from '../lib/format';
+import { createOperationIntentSignature, OperationIdempotencyKeyManager } from '../lib/operationIdempotency';
 
 function isTerminalOnline(seat: Seat): boolean {
   if (!seat.terminal) return false;
@@ -56,6 +57,12 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
   const navigate = useNavigate();
   const query = useQuery(classroomQueryOptions(classroomId));
   const [selectedSeatIds, setSelectedSeatIds] = useState<Set<string>>(() => new Set());
+  const [idempotencyKeys] = useState(
+    () => new OperationIdempotencyKeyManager({
+      storage: typeof window === 'undefined' ? undefined : window.sessionStorage,
+      storageKey: `pve-classroom:start-operation:${classroomId}`,
+    }),
+  );
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   const validSelectedIds = useMemo(() => {
@@ -64,6 +71,11 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
   }, [query.data?.seats, selectedSeatIds]);
 
   const allSelected = Boolean(query.data?.seats.length) && validSelectedIds.length === query.data?.seats.length;
+  const targetSeatIds = useMemo(() => [...validSelectedIds].sort(), [validSelectedIds]);
+  const startIntent = useMemo(
+    () => createOperationIntentSignature({ classroomId, type: 'START', seatIds: targetSeatIds }),
+    [classroomId, targetSeatIds],
+  );
 
   useEffect(() => {
     if (selectAllRef.current) {
@@ -71,8 +83,12 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
     }
   }, [allSelected, validSelectedIds.length]);
 
+  useEffect(() => {
+    idempotencyKeys.synchronize(startIntent);
+  }, [idempotencyKeys, startIntent]);
+
   const startMutation = useMutation({
-    mutationFn: ({ seatIds, idempotencyKey }: { seatIds: string[]; idempotencyKey: string }) =>
+    mutationFn: ({ seatIds, idempotencyKey }: { seatIds: string[]; idempotencyKey: string; intent: string }) =>
       createClassroomOperation(
         classroomId,
         {
@@ -81,7 +97,8 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
         },
         idempotencyKey,
       ),
-    onSuccess: (operation) => {
+    onSuccess: (operation, variables) => {
+      idempotencyKeys.acknowledge(variables.intent);
       setSelectedSeatIds(new Set());
       toast('开机任务已创建', {
         description: `请求已受理，任务 ${formatCompactId(operation.id)} 正在后台处理。`,
@@ -98,12 +115,17 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
     onError: (error) => {
       const message = error instanceof Error ? error.message : '控制平面拒绝了本次请求。';
       const requestId = error instanceof ApiError && error.requestId ? `请求 ID：${error.requestId}` : undefined;
-      toast.error('开机任务创建失败', { description: requestId ? `${message} · ${requestId}` : message });
+      const detail = requestId ? `${message} · ${requestId}` : message;
+      toast.error('尚未确认开机任务是否创建', {
+        description: `${detail} 再次提交相同范围时会复用本次幂等键，避免重复创建任务。`,
+      });
     },
   });
 
-  if (query.isPending) return <LoadingState label="正在加载课堂控制台" />;
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (!query.data) {
+    if (query.isPending) return <LoadingState label="正在加载课堂控制台" />;
+    return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  }
 
   const classroom = query.data;
   const readySeats = classroom.seats.filter(isSeatReady).length;
@@ -148,11 +170,13 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
             <Button
               variant="primary"
               disabled={classroom.seats.length === 0 || startMutation.isPending}
-              aria-describedby="operation-scope-description"
+              aria-describedby={classroom.seats.length > 0 ? 'operation-scope-description' : undefined}
+              title={classroom.seats.length === 0 ? '这间教室还没有可开机的座位' : undefined}
               onClick={() =>
                 startMutation.mutate({
-                  seatIds: validSelectedIds,
-                  idempotencyKey: crypto.randomUUID(),
+                  seatIds: targetSeatIds,
+                  idempotencyKey: idempotencyKeys.keyFor(startIntent),
+                  intent: startIntent,
                 })
               }
             >
@@ -170,6 +194,10 @@ export function ClassroomDetailPage({ classroomId }: { classroomId: string }) {
           </div>
         }
       />
+
+      {query.isError ? (
+        <StaleDataNotice error={query.error} isRetrying={query.isFetching} onRetry={() => void query.refetch()} />
+      ) : null}
 
       <div className="detail-meta-row">
         <StatusBadge status={classroom.status} />

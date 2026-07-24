@@ -13,6 +13,22 @@ jobs:
   backend:
     name: Go backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: pve_classroom_test
+          POSTGRES_USER: pve_classroom_test
+          POSTGRES_PASSWORD: pve-classroom-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pve_classroom_test -d pve_classroom_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PVE_TEST_DATABASE_URL: postgres://pve_classroom_test:pve-classroom-test-password@127.0.0.1:5432/pve_classroom_test?sslmode=disable
     defaults:
       run:
         working-directory: server
@@ -42,6 +58,15 @@ jobs:
         run: |
           go build -o /tmp/pve-classroom-api ./cmd/api
           go build -o /tmp/pve-classroom-worker ./cmd/worker
+          go build -o /tmp/pve-classroom-healthcheck ./cmd/healthcheck
+
+      - name: Cross-compile Linux targets
+        run: |
+          for arch in amd64 loong64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "/tmp/pve-classroom-api-$arch" ./cmd/api
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "/tmp/pve-classroom-worker-$arch" ./cmd/worker
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "/tmp/pve-classroom-healthcheck-$arch" ./cmd/healthcheck
+          done
 
   frontend:
     name: React frontend

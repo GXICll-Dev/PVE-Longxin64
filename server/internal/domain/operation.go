@@ -121,21 +121,22 @@ const (
 )
 
 type OperationItem struct {
-	ID          string     `json:"id"`
-	OperationID string     `json:"operation_id"`
-	SeatID      string     `json:"seat_id"`
-	SeatLabel   string     `json:"seat_label"`
-	DesktopID   string     `json:"desktop_id,omitempty"`
-	ClusterID   string     `json:"cluster_id,omitempty"`
-	PVEVMID     int        `json:"pve_vmid,omitempty"`
-	TargetName  string     `json:"target_name"`
-	Status      ItemStatus `json:"status"`
-	UPID        string     `json:"upid,omitempty"`
-	ErrorCode   string     `json:"error_code,omitempty"`
-	Message     string     `json:"message,omitempty"`
-	StartedAt   *time.Time `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           string     `json:"id"`
+	OperationID  string     `json:"operation_id"`
+	SeatID       string     `json:"seat_id"`
+	SeatLabel    string     `json:"seat_label"`
+	DesktopID    string     `json:"desktop_id,omitempty"`
+	ClusterID    string     `json:"cluster_id,omitempty"`
+	PVEVMID      int        `json:"pve_vmid,omitempty"`
+	TargetName   string     `json:"target_name"`
+	SnapshotName string     `json:"snapshot_name,omitempty"`
+	Status       ItemStatus `json:"status"`
+	UPID         string     `json:"upid,omitempty"`
+	ErrorCode    string     `json:"error_code,omitempty"`
+	Message      string     `json:"message,omitempty"`
+	StartedAt    *time.Time `json:"started_at"`
+	CompletedAt  *time.Time `json:"completed_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type OperationCounts struct {

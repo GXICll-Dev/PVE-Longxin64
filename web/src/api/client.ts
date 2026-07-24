@@ -10,6 +10,10 @@ import type {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '/api/v1';
 
+export function getOperationEventsUrl(operationId: string): string {
+  return `${API_BASE_URL}/operations/${encodeURIComponent(operationId)}/events`;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;

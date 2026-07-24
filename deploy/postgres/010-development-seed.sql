@@ -80,7 +80,7 @@ FROM generate_series(1, 8) AS seat_number;
 
 INSERT INTO virtual_desktops (
     id, seat_id, cluster_id, pve_vmid, name, desired_state,
-    observed_state, template_version, guest_agent_ready,
+    observed_state, template_version, baseline_snapshot_name, guest_agent_ready,
     last_reconciled_at, config_hash
 )
 SELECT
@@ -92,6 +92,7 @@ SELECT
     'RUNNING',
     CASE WHEN seat_number <= 10 THEN 'RUNNING' ELSE 'STOPPED' END,
     'v2026.07',
+    'classroom-baseline',
     seat_number <> 11,
     now() - interval '10 seconds',
     'demo-windows-v2026.07'
@@ -99,7 +100,7 @@ FROM generate_series(1, 12) AS seat_number;
 
 INSERT INTO virtual_desktops (
     id, seat_id, cluster_id, pve_vmid, name, desired_state,
-    observed_state, template_version, guest_agent_ready,
+    observed_state, template_version, baseline_snapshot_name, guest_agent_ready,
     last_reconciled_at, config_hash
 )
 SELECT
@@ -111,6 +112,7 @@ SELECT
     'STOPPED',
     'STOPPED',
     'v2026.06',
+    'classroom-baseline',
     seat_number <= 6,
     now() - interval '20 seconds',
     'demo-linux-v2026.06'

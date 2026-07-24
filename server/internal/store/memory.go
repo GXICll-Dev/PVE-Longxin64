@@ -352,6 +352,7 @@ func developmentClassroom(sequence int, name, site string, status domain.Classro
 				DesiredState:     desiredState,
 				ObservedState:    observedState,
 				TemplateVersion:  classroom.TemplateVersion,
+				BaselineSnapshot: "classroom-baseline",
 				GuestAgentReady:  index <= onlineCount,
 				LastReconciledAt: &lastSeen,
 				ConfigHash:       fmt.Sprintf("dev-%d-%02d", sequence, index),

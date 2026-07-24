@@ -19,25 +19,43 @@ import (
 )
 
 type Options struct {
-	Repository     store.Repository
-	Operations     *operations.Manager
-	Logger         *slog.Logger
-	AllowedOrigins []string
+	Repository             store.Repository
+	Operations             *operations.Manager
+	OperationEvents        *operations.EventLog
+	Logger                 *slog.Logger
+	AllowedOrigins         []string
+	EventPollInterval      time.Duration
+	EventHeartbeatInterval time.Duration
 }
 
 type API struct {
-	repository store.Repository
-	operations *operations.Manager
-	logger     *slog.Logger
-	now        func() time.Time
+	repository             store.Repository
+	operations             *operations.Manager
+	operationEvents        *operations.EventLog
+	logger                 *slog.Logger
+	eventPollInterval      time.Duration
+	eventHeartbeatInterval time.Duration
+	now                    func() time.Time
 }
 
 func NewHandler(options Options) http.Handler {
+	if options.OperationEvents == nil {
+		options.OperationEvents = operations.NewEventLog(0, 0)
+	}
+	if options.EventPollInterval <= 0 {
+		options.EventPollInterval = 500 * time.Millisecond
+	}
+	if options.EventHeartbeatInterval <= 0 {
+		options.EventHeartbeatInterval = 15 * time.Second
+	}
 	api := &API{
-		repository: options.Repository,
-		operations: options.Operations,
-		logger:     options.Logger,
-		now:        time.Now,
+		repository:             options.Repository,
+		operations:             options.Operations,
+		operationEvents:        options.OperationEvents,
+		logger:                 options.Logger,
+		eventPollInterval:      options.EventPollInterval,
+		eventHeartbeatInterval: options.EventHeartbeatInterval,
+		now:                    time.Now,
 	}
 	router := http.NewServeMux()
 	router.HandleFunc("GET /api/v1/health", api.health)
@@ -47,6 +65,7 @@ func NewHandler(options Options) http.Handler {
 	router.HandleFunc("GET /api/v1/classrooms/{id}", api.classroom)
 	router.HandleFunc("POST /api/v1/classrooms/{id}/operations", api.createOperation)
 	router.HandleFunc("GET /api/v1/operations", api.operationsList)
+	router.HandleFunc("GET /api/v1/operations/{id}/events", api.operationEventStream)
 	router.HandleFunc("GET /api/v1/operations/{id}", api.operation)
 	router.HandleFunc("GET /healthz", api.health)
 	router.HandleFunc("GET /readyz", api.readiness)

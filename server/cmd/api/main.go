@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -41,17 +42,23 @@ func run() error {
 		return err
 	}
 	defer repository.Close()
-	adapter, err := app.OpenPVEAdapter(cfg)
-	if err != nil {
-		return err
+	var runner *operations.Runner
+	if cfg.EmbeddedWorker {
+		adapter, err := app.OpenPVEAdapter(cfg)
+		if err != nil {
+			return err
+		}
+		if closer, ok := adapter.(interface{ CloseIdleConnections() }); ok {
+			defer closer.CloseIdleConnections()
+		}
+		runner = operations.NewRunner(repository, adapter, logger, operations.RunnerConfig{
+			WaveSize:      cfg.OperationWaveSize,
+			PollInterval:  cfg.WorkerPollInterval,
+			Lease:         cfg.WorkerLease,
+			SubmitTimeout: cfg.PVERequestTimeout,
+			TaskTimeout:   cfg.PVETaskTimeout,
+		})
 	}
-	runner := operations.NewRunner(repository, adapter, logger, operations.RunnerConfig{
-		WaveSize:      cfg.OperationWaveSize,
-		PollInterval:  cfg.WorkerPollInterval,
-		Lease:         cfg.WorkerLease,
-		SubmitTimeout: cfg.PVERequestTimeout,
-		TaskTimeout:   cfg.PVETaskTimeout,
-	})
 	manager := operations.NewManager(repository, runner)
 	handler := httpapi.NewHandler(httpapi.Options{
 		Repository:     repository,
@@ -59,16 +66,7 @@ func run() error {
 		Logger:         logger,
 		AllowedOrigins: cfg.AllowedOrigins,
 	})
-	httpServer := &http.Server{
-		Addr:              cfg.HTTPAddress,
-		Handler:           handler,
-		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
-		ReadTimeout:       cfg.ReadTimeout,
-		WriteTimeout:      cfg.WriteTimeout,
-		IdleTimeout:       cfg.IdleTimeout,
-		MaxHeaderBytes:    1 << 20,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
-	}
+	httpServer := newHTTPServer(cfg, handler, logger, ctx)
 
 	workerDone := make(chan error, 1)
 	if cfg.EmbeddedWorker {
@@ -123,4 +121,20 @@ func run() error {
 		return processErr
 	}
 	return nil
+}
+
+func newHTTPServer(cfg config.Config, handler http.Handler, logger *slog.Logger, baseContext context.Context) *http.Server {
+	return &http.Server{
+		Addr:              cfg.HTTPAddress,
+		Handler:           handler,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+		MaxHeaderBytes:    1 << 20,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		BaseContext: func(net.Listener) context.Context {
+			return baseContext
+		},
+	}
 }

@@ -10,7 +10,7 @@ interface LastUpdatedProps {
 
 export function LastUpdated({ value, isFetching = false, timezone, label = '数据时间' }: LastUpdatedProps) {
   return (
-    <div className="last-updated" aria-live="polite">
+    <div className="last-updated">
       <Clock3 aria-hidden="true" size={14} />
       <span>
         {isFetching ? '正在刷新 · ' : `${label} · `}

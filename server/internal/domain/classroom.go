@@ -61,6 +61,7 @@ type VirtualDesktop struct {
 	DesiredState     PowerState `json:"desired_state"`
 	ObservedState    PowerState `json:"observed_state"`
 	TemplateVersion  string     `json:"template_version"`
+	BaselineSnapshot string     `json:"baseline_snapshot_name,omitempty"`
 	GuestAgentReady  bool       `json:"guest_agent_ready"`
 	LastReconciledAt *time.Time `json:"last_reconciled_at"`
 	ConfigHash       string     `json:"config_hash"`

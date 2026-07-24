@@ -93,6 +93,7 @@ export interface VirtualDesktop {
   observed_state: PowerState;
   power_state?: PowerState;
   template_version: string;
+  baseline_snapshot_name?: string;
   guest_agent_ready?: boolean;
   ip_address?: string;
   last_reconciled_at?: string | null;
@@ -143,6 +144,7 @@ export interface OperationItem {
   cluster_id?: string;
   pve_vmid?: number;
   target_name?: string;
+  snapshot_name?: string;
   status: string;
   phase?: string;
   upid?: string;
@@ -175,6 +177,50 @@ export interface OperationList {
   items: Operation[];
   total: number;
   generated_at?: string;
+}
+
+export type OperationEventType = 'operation.snapshot' | 'operation.updated' | 'operation.item.updated';
+
+export interface OperationProgress {
+  total: number;
+  completed: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  unknown: number;
+}
+
+export interface OperationItemEventState {
+  item_id: string;
+  seat_id: string;
+  seat_label: string;
+  target_name: string;
+  status: string;
+  error_code?: string;
+  message?: string;
+  updated_at: string;
+}
+
+export interface OperationEvent {
+  event_type: OperationEventType;
+  operation_id: string;
+  item_id?: string;
+  sequence: number;
+  timestamp: string;
+  operation_status: OperationStatus;
+  item_status?: string;
+  seat_id?: string;
+  seat_label?: string;
+  target_name?: string;
+  error_code?: string;
+  message?: string;
+  item_updated_at?: string;
+  progress: OperationProgress;
+  resource_version: number;
+  reset?: boolean;
+  items?: OperationItemEventState[];
 }
 
 export interface CreateClassroomOperationInput {

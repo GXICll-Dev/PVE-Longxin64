@@ -35,6 +35,7 @@ export function getStatusTone(status?: string | null): StatusTone {
     case 'PARTIALLY_SUCCEEDED':
     case 'STALE':
     case 'CANCEL_REQUESTED':
+    case 'UNKNOWN':
       return 'warning';
     case 'FAILED':
     case 'ERROR':

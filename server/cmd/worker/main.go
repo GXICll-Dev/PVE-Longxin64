@@ -39,6 +39,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if closer, ok := adapter.(interface{ CloseIdleConnections() }); ok {
+		defer closer.CloseIdleConnections()
+	}
 	if cfg.StoreDriver == "memory" {
 		logger.Warn("standalone worker is using an isolated in-memory store; use the API embedded worker for development or PostgreSQL for multi-process execution")
 	}

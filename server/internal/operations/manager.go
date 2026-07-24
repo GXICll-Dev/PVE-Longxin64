@@ -91,23 +91,28 @@ func (manager *Manager) Create(ctx context.Context, classroomID, idempotencyKey,
 		clusterID := ""
 		pveVMID := 0
 		targetName := seat.Label
+		snapshotName := ""
 		if seat.Desktop != nil {
 			desktopID = seat.Desktop.ID
 			clusterID = seat.Desktop.ClusterID
 			pveVMID = seat.Desktop.PVEVMID
 			targetName = seat.Desktop.Name
+			if request.Type == domain.OperationRestore {
+				snapshotName = seat.Desktop.BaselineSnapshot
+			}
 		}
 		operation.Items = append(operation.Items, domain.OperationItem{
-			ID:          domain.NewID(),
-			OperationID: operation.ID,
-			SeatID:      seat.ID,
-			SeatLabel:   seat.Label,
-			DesktopID:   desktopID,
-			ClusterID:   clusterID,
-			PVEVMID:     pveVMID,
-			TargetName:  targetName,
-			Status:      domain.ItemQueued,
-			UpdatedAt:   now,
+			ID:           domain.NewID(),
+			OperationID:  operation.ID,
+			SeatID:       seat.ID,
+			SeatLabel:    seat.Label,
+			DesktopID:    desktopID,
+			ClusterID:    clusterID,
+			PVEVMID:      pveVMID,
+			TargetName:   targetName,
+			SnapshotName: snapshotName,
+			Status:       domain.ItemQueued,
+			UpdatedAt:    now,
 		})
 	}
 	operation.RefreshCounts()

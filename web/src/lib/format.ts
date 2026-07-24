@@ -78,7 +78,7 @@ export function formatActiveSession(session: ActiveSession | string | null): str
 }
 
 export function getOperationProgress(counts: OperationCounts): { completed: number; percent: number } {
-  const completed = counts.succeeded + counts.failed + counts.skipped;
+  const completed = counts.succeeded + counts.failed + counts.skipped + counts.unknown;
   if (counts.total <= 0) return { completed, percent: 0 };
   return { completed, percent: Math.min(100, Math.round((completed / counts.total) * 100)) };
 }

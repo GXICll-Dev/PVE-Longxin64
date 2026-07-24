@@ -184,6 +184,58 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /operations/{operationId}/events:
+    get:
+      tags: [Operations]
+      operationId: streamOperationEvents
+      summary: 订阅批量任务增量事件
+      description: |
+        使用 Server-Sent Events 推送任务快照、父任务变化和单项变化。
+        客户端断线后通过 `Last-Event-ID` 请求尚在有界历史中的事件；如果历史已淘汰、
+        API 实例重启或请求来自另一实例，服务端会发送 `reset=true` 的完整快照。
+        心跳使用 SSE 注释行，不占用事件序列；任务进入终态并发送完最终变化后流会正常结束。
+        客户端必须保留轮询 `GET /operations/{operationId}` 作为降级路径。
+      parameters:
+        - $ref: "#/components/parameters/OperationId"
+        - $ref: "#/components/parameters/LastEventId"
+      responses:
+        "200":
+          description: |
+            SSE 事件流。每个具名事件的 `data` 都是 OperationEvent JSON；
+            `id` 与 JSON 中的 `sequence` 相同。
+          headers:
+            Cache-Control:
+              description: 禁止缓存和代理转换事件流
+              schema:
+                type: string
+            X-Accel-Buffering:
+              description: 指示兼容反向代理不要缓冲事件
+              schema:
+                type: string
+                enum: ["no"]
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - type: string
+                    description: 实际 SSE 文本帧。
+                  - type: array
+                    description: 文档工具使用的逻辑事件序列；线上响应不会编码为 JSON 数组。
+                    items:
+                      $ref: "#/components/schemas/OperationEvent"
+              example: |
+                retry: 2000
+
+                id: 42
+                event: operation.updated
+                data: {"event_type":"operation.updated","operation_id":"c7d188f0-18f3-4bf2-906d-e8f9ef66de8d","sequence":42,"timestamp":"2026-07-24T08:00:00Z","operation_status":"RUNNING","progress":{"total":50,"completed":10,"queued":30,"running":10,"succeeded":10,"failed":0,"skipped":0,"unknown":0},"resource_version":8}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /operations:
     get:
       tags: [Operations]
@@ -226,6 +278,16 @@ components:
       schema:
         type: string
         format: uuid
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: 最近已完整处理的事件序列；EventSource 重连时会自动发送。
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        maximum: 4503599627370000
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -585,7 +647,7 @@ components:
           format: uuid
         pve_vmid:
           type: integer
-          minimum: 100
+          minimum: 1
         name:
           type: string
         desired_state:
@@ -596,6 +658,10 @@ components:
           enum: [RUNNING, STOPPED, UNKNOWN]
         template_version:
           type: string
+        baseline_snapshot_name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+          description: 平台显式认可的短期回滚基线；省略表示尚未配置，不能执行快照回滚。
         guest_agent_ready:
           type: boolean
         last_reconciled_at:
@@ -608,6 +674,7 @@ components:
 
     CreateClassroomOperation:
       type: object
+      description: RESTORE 必须同时提供非空 reason 并将 confirmed 设为 true；其他操作不要求确认。
       additionalProperties: false
       required: [type]
       properties:
@@ -616,15 +683,18 @@ components:
         seat_ids:
           type: array
           uniqueItems: true
+          description: 目标座位；省略或传空数组表示整间教室，非空时仅操作列出的座位。
           items:
             type: string
             format: uuid
         reason:
           type: string
           maxLength: 500
+          description: 操作原因；RESTORE 时必填且去除首尾空白后不能为空。
         confirmed:
           type: boolean
           default: false
+          description: 破坏性操作确认；RESTORE 时必须为 true。
 
     Operation:
       type: object
@@ -713,6 +783,10 @@ components:
           enum: [QUEUED, RUNNING, WAITING_PVE, VERIFYING, SUCCEEDED, FAILED, SKIPPED, UNKNOWN]
         target_name:
           type: string
+        snapshot_name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+          description: RESTORE 任务创建时固化的基线快照名称；其他操作省略。
         upid:
           type: string
         error_code:
@@ -748,6 +822,125 @@ components:
         generated_at:
           type: string
           format: date-time
+
+    OperationEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - event_type
+        - operation_id
+        - sequence
+        - timestamp
+        - operation_status
+        - progress
+        - resource_version
+      properties:
+        event_type:
+          type: string
+          enum: [operation.snapshot, operation.updated, operation.item.updated]
+        operation_id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740000
+        timestamp:
+          type: string
+          format: date-time
+        operation_status:
+          $ref: "#/components/schemas/OperationStatus"
+        item_status:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_PVE, VERIFYING, SUCCEEDED, FAILED, SKIPPED, UNKNOWN]
+        seat_id:
+          type: string
+          format: uuid
+        seat_label:
+          type: string
+        target_name:
+          type: string
+        error_code:
+          type: string
+        message:
+          type: string
+        item_updated_at:
+          type: string
+          format: date-time
+        progress:
+          $ref: "#/components/schemas/OperationProgress"
+        resource_version:
+          type: integer
+          minimum: 1
+        reset:
+          type: boolean
+          default: false
+          description: 为 true 时客户端必须用本事件的 items 替换本地单项状态。
+        items:
+          type: array
+          description: 仅快照事件携带的完整单项状态。
+          items:
+            $ref: "#/components/schemas/OperationItemEventState"
+
+    OperationItemEventState:
+      type: object
+      additionalProperties: false
+      required: [item_id, seat_id, seat_label, target_name, status, updated_at]
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        seat_id:
+          type: string
+          format: uuid
+        seat_label:
+          type: string
+        target_name:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_PVE, VERIFYING, SUCCEEDED, FAILED, SKIPPED, UNKNOWN]
+        error_code:
+          type: string
+        message:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    OperationProgress:
+      type: object
+      additionalProperties: false
+      required: [total, completed, queued, running, succeeded, failed, skipped, unknown]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        completed:
+          type: integer
+          minimum: 0
+        queued:
+          type: integer
+          minimum: 0
+        running:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        unknown:
+          type: integer
+          minimum: 0
 
     OperationCounts:
       type: object

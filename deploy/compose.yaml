@@ -27,6 +27,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../server/migrations/000001_initial.up.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ../server/migrations/000002_operation_snapshot_names.up.sql:/docker-entrypoint-initdb.d/002-snapshot-names.sql:ro
       - ./postgres/010-development-seed.sql:/docker-entrypoint-initdb.d/010-development-seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -46,6 +47,8 @@ services:
   worker:
     <<: *control-plane
     entrypoint: ["/app/pve-classroom-worker"]
+    healthcheck:
+      disable: true
 
   web:
     build:
@@ -60,8 +63,10 @@ services:
   gateway:
     image: nginx:1.27-alpine
     depends_on:
-      - api
-      - web
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
     ports:
       - "8088:8080"
     volumes:
@@ -71,10 +76,11 @@ services:
       - /var/cache/nginx
       - /var/run
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/gateway-health | grep -q 'ok'"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/gateway-health && wget -q -O /dev/null http://api:8080/api/v1/readiness && wget -q -O /dev/null http://web/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

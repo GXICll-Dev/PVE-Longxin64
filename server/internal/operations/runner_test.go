@@ -42,6 +42,19 @@ type submitFailureAdapter struct {
 	waitCalls   int
 }
 
+type captureAdapter struct {
+	requests []pve.Request
+}
+
+func (adapter *captureAdapter) Submit(_ context.Context, request pve.Request) (string, error) {
+	adapter.requests = append(adapter.requests, request)
+	return "UPID:fake:captured", nil
+}
+
+func (*captureAdapter) Wait(context.Context, string) (pve.Result, error) {
+	return pve.Result{Succeeded: true, Code: "OK", Message: "完成"}, nil
+}
+
 func (adapter *submitFailureAdapter) Submit(context.Context, pve.Request) (string, error) {
 	adapter.submitCalls++
 	return "", &pve.Error{Code: adapter.code, Retryable: adapter.code == pve.ErrorUnavailable, Message: "injected submit failure"}
@@ -339,5 +352,99 @@ func TestMissingDesktopFailsBothItemAndSeat(t *testing.T) {
 	}
 	if adapter.submitCalls != 0 {
 		t.Fatalf("missing desktop was submitted to PVE %d times", adapter.submitCalls)
+	}
+}
+
+func TestRunnerPassesBaselineSnapshotToPVE(t *testing.T) {
+	t.Parallel()
+	repository := store.NewDevelopmentRepository(time.Now())
+	adapter := &captureAdapter{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runner := NewRunner(repository, adapter, logger, RunnerConfig{WaveSize: 1})
+	manager := NewManager(repository, runner)
+	classrooms, _ := repository.ListClassrooms(context.Background())
+	classroom, _ := repository.GetClassroom(context.Background(), classrooms[0].ID)
+	created, err := manager.Create(context.Background(), classroom.ID, "restore-submit", "request-restore-submit", CreateRequest{
+		Type:      domain.OperationRestore,
+		SeatIDs:   []string{classroom.Seats[0].ID},
+		Reason:    "恢复课程基线",
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := repository.ClaimNextOperation(context.Background(), runner.config.WorkerID, time.Minute)
+	if err != nil || operation == nil {
+		t.Fatalf("claim operation: operation=%v err=%v", operation, err)
+	}
+	if err := runner.execute(context.Background(), operation); err != nil {
+		t.Fatalf("execute restore: %v", err)
+	}
+	if len(adapter.requests) != 1 || adapter.requests[0].SnapshotName != "classroom-baseline" {
+		t.Fatalf("PVE request did not contain the baseline snapshot: %+v", adapter.requests)
+	}
+	stored, err := repository.GetOperation(context.Background(), created.Operation.ID)
+	if err != nil || stored.Status != domain.OperationSucceeded {
+		t.Fatalf("restore operation did not succeed: operation=%+v err=%v", stored, err)
+	}
+}
+
+func TestRestoreWithoutBaselineFailsBeforePVE(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	classroomID := domain.NewID()
+	seatID := domain.NewID()
+	repository := store.NewMemoryRepository([]domain.Classroom{{
+		ID:              classroomID,
+		OrganizationID:  domain.NewID(),
+		Name:            "缺少基线测试教室",
+		Site:            "测试校区",
+		Status:          domain.ClassroomReady,
+		Timezone:        "Asia/Shanghai",
+		TemplateName:    "测试模板",
+		TemplateVersion: "1.0.0",
+		ResourceVersion: 1,
+		UpdatedAt:       now,
+		Seats: []domain.Seat{{
+			ID:             seatID,
+			Label:          "01",
+			OperationState: domain.ItemSucceeded,
+			Desktop: &domain.VirtualDesktop{
+				ID:              domain.NewID(),
+				Name:            "student-01",
+				ClusterID:       domain.NewID(),
+				PVEVMID:         101,
+				DesiredState:    domain.PowerStopped,
+				ObservedState:   domain.PowerStopped,
+				TemplateVersion: "1.0.0",
+			},
+		}},
+	}})
+	adapter := &submitFailureAdapter{code: pve.ErrorPermission}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runner := NewRunner(repository, adapter, logger, RunnerConfig{WaveSize: 1})
+	manager := NewManager(repository, runner)
+	created, err := manager.Create(context.Background(), classroomID, "restore-no-baseline", "request-no-baseline", CreateRequest{
+		Type:      domain.OperationRestore,
+		SeatIDs:   []string{seatID},
+		Reason:    "验证缺少基线",
+		Confirmed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := repository.ClaimNextOperation(context.Background(), runner.config.WorkerID, time.Minute)
+	if err != nil || operation == nil {
+		t.Fatalf("claim operation: operation=%v err=%v", operation, err)
+	}
+	if err := runner.execute(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := repository.GetOperation(context.Background(), created.Operation.ID)
+	if stored.Items[0].Status != domain.ItemFailed || stored.Items[0].ErrorCode != "BASELINE_SNAPSHOT_NOT_CONFIGURED" {
+		t.Fatalf("missing baseline was not reported per item: %+v", stored.Items[0])
+	}
+	if adapter.submitCalls != 0 {
+		t.Fatalf("restore without a baseline reached PVE %d times", adapter.submitCalls)
 	}
 }

@@ -127,7 +127,7 @@ func (repository *PostgresRepository) GetClassroom(ctx context.Context, id strin
 		       tc.agent_version, tc.last_seen_at,
 		       vd.id::text, vd.name, vd.cluster_id::text, vd.pve_vmid,
 		       vd.desired_state, vd.observed_state, vd.template_version,
-		       vd.guest_agent_ready, vd.last_reconciled_at, vd.config_hash
+		       vd.baseline_snapshot_name, vd.guest_agent_ready, vd.last_reconciled_at, vd.config_hash
 		FROM seats s
 		LEFT JOIN thin_clients tc ON tc.seat_id = s.id
 		LEFT JOIN virtual_desktops vd ON vd.seat_id = s.id
@@ -142,7 +142,7 @@ func (repository *PostgresRepository) GetClassroom(ctx context.Context, id strin
 		var terminalID, terminalName, terminalIP, terminalArchitecture, terminalVersion *string
 		var terminalOnline *bool
 		var terminalLastSeen *time.Time
-		var desktopID, desktopName, desktopClusterID, desiredState, observedState, templateVersion, configHash *string
+		var desktopID, desktopName, desktopClusterID, desiredState, observedState, templateVersion, baselineSnapshot, configHash *string
 		var desktopVMID *int
 		var guestAgentReady *bool
 		var lastReconciledAt *time.Time
@@ -165,6 +165,7 @@ func (repository *PostgresRepository) GetClassroom(ctx context.Context, id strin
 			&desiredState,
 			&observedState,
 			&templateVersion,
+			&baselineSnapshot,
 			&guestAgentReady,
 			&lastReconciledAt,
 			&configHash,
@@ -191,6 +192,7 @@ func (repository *PostgresRepository) GetClassroom(ctx context.Context, id strin
 				DesiredState:     domain.PowerState(valueOrEmpty(desiredState)),
 				ObservedState:    domain.PowerState(valueOrEmpty(observedState)),
 				TemplateVersion:  valueOrEmpty(templateVersion),
+				BaselineSnapshot: valueOrEmpty(baselineSnapshot),
 				GuestAgentReady:  valueOrFalse(guestAgentReady),
 				LastReconciledAt: lastReconciledAt,
 				ConfigHash:       valueOrEmpty(configHash),
@@ -279,7 +281,7 @@ func getOperation(ctx context.Context, querier rowQuerier, id string) (domain.Op
 	}
 	rows, err := querier.Query(ctx, `
 		SELECT id::text, operation_id::text, seat_id::text, seat_label, desktop_id::text,
-		       cluster_id::text, pve_vmid, target_name, status, upid, error_code, message,
+		       cluster_id::text, pve_vmid, target_name, snapshot_name, status, upid, error_code, message,
 		       started_at, completed_at, updated_at
 		FROM operation_items WHERE operation_id = $1 ORDER BY seat_label, id`, id)
 	if err != nil {
@@ -299,6 +301,7 @@ func getOperation(ctx context.Context, querier rowQuerier, id string) (domain.Op
 			&clusterID,
 			&pveVMID,
 			&item.TargetName,
+			&item.SnapshotName,
 			&item.Status,
 			&item.UPID,
 			&item.ErrorCode,
@@ -384,9 +387,9 @@ func (repository *PostgresRepository) CreateOperation(ctx context.Context, key, 
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO operation_items (
-			  id, operation_id, seat_id, seat_label, desktop_id, cluster_id, pve_vmid, target_name, status,
+			  id, operation_id, seat_id, seat_label, desktop_id, cluster_id, pve_vmid, target_name, snapshot_name, status,
 			  upid, error_code, message, started_at, completed_at, updated_at
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 			item.ID,
 			operation.ID,
 			item.SeatID,
@@ -395,6 +398,7 @@ func (repository *PostgresRepository) CreateOperation(ctx context.Context, key, 
 			nullableString(item.ClusterID),
 			nullableInt(item.PVEVMID),
 			item.TargetName,
+			item.SnapshotName,
 			item.Status,
 			item.UPID,
 			item.ErrorCode,
