@@ -1,0 +1,4 @@
+interface:
+  display_name: "PVE-Longxin64 项目规范"
+  short_description: "按任务加载云教室领域、平台契约、前端体验与交付质量规范"
+  default_prompt: "使用 $pve-longxin64-project 按当前任务加载并遵循 PVE-Longxin64 项目规范。"
